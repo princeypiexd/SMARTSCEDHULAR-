@@ -1,0 +1,265 @@
+\documentclass{llncs}
+\usepackage{graphicx}
+\usepackage{times}
+\usepackage{url}
+\usepackage{latexsym}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{adjustbox}
+\usepackage{float}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{lscape}
+
+\usepackage{longtable}
+
+\usepackage[pagebackref,breaklinks,colorlinks]{hyperref}
+
+\usepackage[capitalize]{cleveref}
+
+%\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{dirtytalk}
+%\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{amsmath}
+\usepackage{multicol}
+ %\usepackage{multirow}
+%\usepackage{graphicx}
+%
+\begin{document}
+
+\title{SmartScheduler++: Intelligent CPU Scheduling in Linux CFS Using eBPF and Machine Learning}
+%\title{Exploring Innovations and Obstacles in Deepfake Medical Imaging: Techniques for Creation and Identification}
+
+\author{Pankaj Suman, Smita Das*}
+%\author{...}
+
+\institute{Department of Computer Science \& Engineering\\NIT Agartala, \\ Tripura - 799046 , INDIA\\email:{smitadas.nita@gmail.com}}
+%\institute{Department of ....\\..., \\ ... - 12345 , COUNTRY\\ *email: {...}}
+\maketitle
+
+\begin{abstract}
+
+
+This paper introduces SmartScheduler++, an adaptive CPU scheduling framework for the Linux Completely Fair Scheduler (CFS) that integrates eBPF based observability and machine learning to enhance CPU scheduling. The framework uses low level scheduler trace points to collect runtime data such as execution time, wait time, wakeups, and context switches with low overhead. The data is then converted into fifteen features that represent system efficiency, responsiveness, and fairness.The proposed solution is tested using various classification algorithms, including Random Forest, Gradient Boosting, Logistic Regression, and k Nearest Neighbors, with varying observation windows. The experimental evaluation shows that ensemble classifiers perform better than linear and distance based classifiers, with Random Forest and Gradient Boosting achieving the best accuracy and F1 scores. The evaluation also shows that longer observation windows lead to better performance, achieving optimal accuracy of 97\% at 45 seconds with Random Forest. 
+
+\begin{keywords}
+Completely Fair Scheduler, extended Barkeley Packet Filter, CPU Scheduling, Linux kernel System.
+  \end{keywords}
+\end{abstract}
+
+\section{INTRODUCTION}
+CPU scheduling is an elementary feature of the present day operating system which strongly impact \cite{seelam2024comparative} machine productivity and throughput. In contrast, Linux, which is extensively utilized in server and cloud infrastructure, follows an analogy named Completely Fair Scheduler (CFS) \cite{LinuxCFSvsWindows2020}, which assigns a processor span between executing programs. Nevertheless, the intent of scheduler ensures fairness, although previous theories have found inability such as load imbalance, delayed task wakeup, notably on multi core systems \cite{goel2025performance}. Recent advances in extended Berkeley Packet Filter (eBPF) allows secure, low overhead, real time monitoring of kernel scheduling events through bftrace, perf and trace points commands. 
+
+In real world scenarios, the Linux CFS often exhibits suboptimal behavior under production workloads. Prior studies \cite{MLEngineCFS2022} indicate that CFS may leave CPU cores idle while runnable programs remain waiting. Moreover, CFS makes scheduling decisions using heuristics, but its predictive power is limited. As a result, it often struggles to deliver consistent throughput in database servers and applications that require heavy synchronization \cite{das2023linux}. Because CFS relies so much on past execution history, it struggles to keep up with workloads such as: microservices, mixed I/O CPU applications, and cloud native systems \cite{CFSFairnessEBPF2022}. Real-world observations using eBPF show that this leads to delayed scheduling decisions and fairness issues during runtime \cite{eBPFTechnology2021}. These problems increase tail latency and reduce overall system productivity. To address these challenges, this work introduces SmartScheduler++, an eBPF driven, machine learning based adaptive CPU scheduler for Linux CFS. The main contributions of this paper are: 
+g\begin{itemize}
+    \item A lightweight eBPF tracing framework is designed to capture fine grained, real time Linux scheduler metrics (runtime, waiting time, wakeups, context switches, etc.) without requiring kernel recompilation.
+    \item CPU scheduling is reformulated as a learning problem, where machine learning models characterize task behavior and enable workload aware scheduling decisions that dynamically adapt to both CPU bound and I/O-bound workloads.
+\end{itemize}
+
+The rest if the paper is structured as follows: Section 2 discusses recent literature along with background, Section 3 depicts Proposed Methodology in details followed by Result \& Analsis in Section 4. Finally, the paper is concluded with future work in Section 5. 
+
+
+
+
+\section{\textit{RELATED WORK}}
+
+%\subsection{Background}
+%The Linux CPU scheduler allocates processor time among runnable tasks while balancing fairness, latency, and throughput. Earlier versions of the Linux kernel employed the O(1) scheduler; however, its limitations in extensibility and fairness led to the adoption of the CFS as the default scheduler beginning with kernel v2.6.23. 
+CFS improves multitasking by assigning fractional time slices based on task weights derived from nice values. Instead of fixed time slices, CFS organizes execution using virtual runtime (vruntime) and selects the task with the smallest vruntime from a red-black tree, achieving efficient scheduling with $O(\log n)$ complexity \cite{harichane2022kubesc}. 
+
+Despite its design for long-term fairness, CFS has been shown to suffer from load imbalance \cite{hayat2023machine}, delayed wakeups, upward task migration, and idle cores in multicore environments. Prior studies further demonstrate that machine learning (ML) techniques can predict task behavior \cite{MLEngineCFS2022}, offering opportunities to enhance scheduling efficiency. \cite{Lozi2016WastedCores} demonstrated that the Completely Fair Scheduler (CFS) can violate the principle of work conservation, resulting in significant under utilization of CPU resources in real world applications such as databases and parallel build systems. Comparative studies between Linux CFS and Windows schedulers further reveal that while CFS generally achieves lower latency for interactive tasks, its performance degrades under heavy background load and mixed workload scenarios \cite{LinuxCFSvsWindows2020}. 
+
+To overcome these limitations, researchers have explored machine learning based scheduling enhancements such as predicting CPU burst times using historical execution behavior to reduce turnaround time and context switch overhead \cite{Negi2005MLLinux}. Subsequent work applied supervised learning techniques, including tree based models, to dynamically adjust priorities and improve scheduling efficiency\cite{geng2022profile}. However, most of these approaches depend on offline training or require invasive kernel modifications \cite{CPUModelImprovement2019}, which restricts their applicability in production systems. Recent research has shifted focus toward improving scheduler observability rather than direct kernel modification. The advent of the eBPF has enabled safe, lowoverhead, and non intrusive tracing of kernel scheduling events such as runtime, waiting time, wakeups, and context switches \cite{eBPFTechnology2021}. eBPF-based studies have been used to analyze fairness properties of CFS \cite{Chen2020MLLoadBalancingKernel} and to identify runtime scheduling anomalies in production environments. In parallel, learning-based schedulers leveraging deep learning and reinforcement learning have been extensively studied in cloud, fog, and multi-cloud environments. These approaches optimize metrics such as makespan, latency, and energy consumption, but they operate above the operating system kernel and do not directly influence Linux CPU scheduling decisions \cite{Choppara2025DRLMOTS}.
+
+\section{PROPOSED METHODOLOGY}
+In this section, we describe the system architecture along with dataset description. 
+
+\subsection{System model}
+The proposed model is depicted in Figure \ref{fig 1:f1}. 
+\begin{figure}[h]
+ \centering
+ \includegraphics[width=11cm, height=10cm , keepaspectratio]{figures/diagram.png}
+ \caption{Workflow Architecture of SmartScheduler++}
+ \label{fig 1:f1}
+ \end{figure}
+The system model contains the smartschedular++ user space, eBPF Tracing \& Monitoring Layer, Linux Completely Fair Scheduler and Multicore CPU execution. 
+
+\textbf{SmartScheduler++} functions as the intelligent decision-making layer in user space, interacting with the kernel via eBPF hooks. An ML classifier evaluates process behavior using metrics such as CPU usage, wait times, and I/O activity. Tasks are categorized into CPU-bound, I/O bound, or latency sensitive types using models like Random Forest, Gradient Boosting, Logistic Regression and K-Nearest Neighbor. Based on classification, SmartScheduler++ dynamically adjusts task priorities for real time responsiveness. These decisions evolve continuously with runtime behavior. 
+
+\textbf{eBPF Tracing \& Monitoring Layer}  is a subsystem that bridges SmartScheduler++ with the Linux scheduler. By attaching eBPF programs to key trace points, it captures context switches, wakeups, and latency events with near zero overhead. It computes real time metrics such as: runtime, wait time, wake up frequency and context switches. The following commands list trace points, inspect their fields, and ensure events are not lost:
+\begin{align}
+\texttt{bpftrace -l 'tracepoint:sched:*'} \\
+\texttt{bpftrace -lv tracepoint:sched:*'} \\
+\texttt{BPFTRACE\_PERF\_RB\_PAGES = 8192}
+\end{align}
+
+\textbf{Linux Completely Fair Scheduler (CFS)} is the default CPU scheduler, ensuring fairness by allocating time based on virtual runtime. Tasks with lower vruntime are prioritized, preventing starvation. SmartScheduler++ influences CFS indirectly via priority and policy adjustments.
+
+\textbf{Multicore CPU Execution} integrates multiple cores on a single chip, enabling parallel instruction processing and higher throughput. Each core runs threads independently with private caches, coherence protocols, and pipelining. SMT, branch prediction, and interconnects further enhance scalability, efficiency, and performance.
+
+\subsection{Dataset description}
+
+This work utilizes a scheduler centric dataset derived from Linux kernel trace-points using eBPF instrumentation and can be found at \footnote{https://github.com/princeypiexd/SMARTSCEDHULAR-.git}. Raw scheduler events have been collected from a Linux system using the bpftrace tool \footnote{https://github.com/bpftrace/bpftrace}. Four stable Linux scheduler trace points are used as follows: \texttt{sched\_stat\_runtime}, \texttt{sched\_stat\_wait}, \texttt{sched\_wakeup}, \texttt{sched\_switch}. These trace points expose complementary aspects of scheduling behavior, including execution time, waiting latency, wakeup activity, and context switch frequency. Each record in the raw dataset contains the event type, high resolution timestamp (nanoseconds), process identifier (PID), process name, CPU core, and an event specific value and is depicted in Figure \ref{figure 2:f2}. 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.48\textwidth, height=0.28\textheight]{figures/command.png} \ref{figure 2:f2}
+    \caption{bpftrace script capturing scheduler trace points}
+    \label{figure 2:f2}
+\end{figure}
+From the four aggregated base metrics, additional derived features were computed to quantify execution efficiency, interactivity, scheduling overhead, and fairness. The final dataset contains fifteen features described in Table \ref{tab:features}.
+
+
+\begin{table}[!t]
+
+\caption{Scheduler Feature Definitions}
+
+\label{tab:features}
+\centering
+\scriptsize
+\renewcommand{\arraystretch}{2}
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{|p{2.6cm}|p{3.0cm}|p{2.2cm}|p{2.0cm}|}
+\hline
+\textbf{Feature} & \textbf{Definition} & \textbf{Insight} & \textbf{Feature Origin} \\
+\hline
+\texttt{total\_runtime\_ns} & Total CPU execution time per window & CPU intensity & Primary \\
+\hline
+\texttt{avg\_runtime\_ns} & Mean runtime per scheduling event & Burst length & Derived \\
+\hline
+\texttt{runtime\_var\_ns} & Runtime variance (ns$^{2}$) & Burst variability & Derived \\
+\hline
+\texttt{total\_wait\_ns} & Total wait time in runqueue & Scheduling latency & Primary \\
+\hline
+\texttt{avg\_wait\_ns} & Mean wait time per event & Responsiveness & Derived \\
+\hline
+\texttt{wait\_var\_ns} & Wait time variance (ns$^{2}$) & Wait instability & Derived \\
+\hline
+\texttt{wakeup\_count} & Number of wakeup events & Interactivity & Primary \\
+\hline
+\texttt{switch\_count} & Number of context switches & Preemption rate & Primary \\
+\hline
+\texttt{runtime\_per\_switch} & Runtime normalized by switches & CPU efficiency & Derived \\
+\hline
+\texttt{w\_ratio} & Wakeups per switch & Interrupt driven behavior & Derived \\
+\hline
+\texttt{wait\_runtime\_ratio} & Wait time to runtime ratio & Starvation pressure & Derived \\
+\hline
+\texttt{cpu\_util} & Runtime normalized by window duration & CPU utilization & Derived \\
+\hline
+\texttt{switch\_rate} & Context switches per second & Scheduler overhead & Derived \\
+\hline
+\texttt{wakeup\_rate} & Wakeups per second & Task responsiveness & Derived \\
+\hline
+\texttt{fairness\_pressure} & Composite wait/runtime metric & Scheduling fairness & Derived \\
+\hline
+\end{tabular}
+\end{table}
+
+
+
+
+%\subsubsection{ Labeling Strategy}
+
+%Task labels were assigned offline using scheduler observable behavior rather than application semantics. Processes exhibiting high CPU utilization with low wakeup activity were labeled as CPU bound, while processes with low CPU utilization and high wakeup rates were labeled as I/O bound. Ambiguous scheduling windows that did not clearly satisfy either condition were excluded to reduce label noise and improve classifier robustness.
+
+%\subsubsection{ Dataset Characteristics}
+
+%The resulting dataset reflects realistic operating system workloads and is inherently imbalanced, with I/O bound and short lived tasks dominating over sustained CPU bound workloads.trace points are being captured for 5 seconds , 10 seconds , 30,45 one 60 seconds while To prevent information leakage during model evaluation, all train test splits were performed using group based partitioning by PID , several features were derived later using pyhthon script from csv files.
+
+
+
+
+
+\section{RESULTS \& ANALYSIS}
+In this section, experiments have been carried out using various ML models such as: Random Forest, KNN, Logistic Regression and Gradient Boost. 
+
+Figure \ref{fig:f3}(a) shows the performance of the Random Forest classifier across different time windows. At 5 seconds, the model achieves high precision but low recall, leading to a reduced F1 score due to insufficient observation time. As the time window increases, recall and F1 score improve significantly while precision remains high. The best overall performance is achieved at 45 seconds, with the highest accuracy and F1 score. These results indicate that longer time windows (20–45 seconds) enable more accurate and balanced classification of CPU bound and I/O bound workloads.
+\begin{figure}[h!]
+\centering
+\includegraphics[width=1.0\textwidth]{figures/metrics.png}
+\caption{Performance Metrics Analysis}
+\label{fig:f3}
+\end{figure}
+Figure \ref{fig:f3}(b) shows kNN performance across varying time windows. At 5 seconds, recall and F1 score are low despite acceptable accuracy, reflecting poor CPU bound detection. Performance improves notably at 10 seconds, but degrades slightly at 20 seconds due to class imbalance. The best precision recall balance occurs at 45 seconds. Figure \ref{fig:f3}(c) presents the performance of the Logistic Regression classifier across varying time windows. At 5 seconds, accuracy is relatively high but recall and F1-score remain low, indicating weak detection of CPU-bound tasks. Performance improves steadily at 10 and 20 seconds, with the best precision \& recall balance achieved at 45 seconds. Figure \ref{fig:f3}(d) illustrates Gradient Boosting performance across time windows. At 5 seconds, accuracy and precision are high but recall is lower, missing CPU bound tasks. At 10 and 20 seconds, recall peaks while accuracy and F1-score remain stable. The 45 second window delivers the best overall results, confirming Gradient Boosting’s robustness to window variations and suitability for smart scheduling.
+
+Among the above mentioned ML algorithms its clear that RF depicts the best performance. Additionally, Figure \ref{fig:f8} shows the performance improvement of Random Forest across various time windows. At 5 seconds, baseline accuracy is ~0.92. Accuracy improves slightly at 10 seconds and gains further at 20 seconds with better class discrimination. The 45 second window achieves the highest accuracy (~0.97) and most stable results, confirming that longer observation windows consistently enhance Random Forest accuracy for smart scheduling.
+\begin{figure}[h!]
+\centering
+\includegraphics[width=0.6\textwidth]{figures/best_case.png}
+\caption{Improvement of Accuracy over Time}
+\label{fig:f8}
+\end{figure}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.5\textwidth, height=0.25\textheight]{figures/rf_15F_45seconds.png}
+    \caption{Confusion matrix for the random forest algorithm}
+    \label{figure 2:bpftrace_sched}
+\end{figure}
+Accuracy measures the overall proportion of correctly classified workloads among all samples. While it provides a general performance overview, it may be misleading in the presence of class imbalance between CPU-bound and IO-bound tasks.
+
+\subsection{Comparative Analysis}
+Table \ref{tab:short_window_comparison} and Table \ref{tab:long_window_comparison} represents a comparative evaluation of Logistic Regression, kNN, Random Forest and Gradient Boosting classifiers across Short Time Window (5 - 10 seconds) and Long Time Window (20 - 45 seconds) respectively. Random Forest and Gradient Boosting demonstrate superior and stable performance across all time windows, with the best results observed at the 45 second window. This indicates the model's capacity to capture complex scheduling patterns when sufficient observation time is available. In contrast, Logistic Regression and kNN exhibit lower and more variable performance, particularly at shorter time windows, due to their sensitivity to class imbalance and limited feature representation meanwhile fig \ref{figure 2:bpftrace_sched} showcase the confusion matrix of random forest.
+\begin{table}[t]
+\centering
+\caption{Performance Comparison Across Classifiers for Short Time Windows}
+
+\label{tab:short_window_comparison}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lcccc}
+\hline
+\textbf{Model} & \textbf{Time} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} \\
+\hline
+Random Forest        & 5 s  & 0.9211 & 1.0000 & 0.4000 \\
+                     & 10 s & 0.9286 & 1.0000 & 0.8571 \\
+Gradient Boosting    & 5 s  & 0.9474 & 1.0000 & 0.6000 \\
+                     & 10 s & 0.9600 & 0.9231 & 1.0000 \\
+Logistic Regression  & 5 s  & 0.8684 & 0.5000 & 0.2000 \\
+                     & 10 s & 0.6667 & 0.7500 & 0.5000 \\
+kNN                  & 5 s  & 0.8421 & 0.3333 & 0.2000 \\
+                     & 10 s & 0.8000 & 0.8750 & 0.7000 \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Performance Comparison Across Classifiers for Long Time Windows}
+\label{tab:long_window_comparison}
+\setlength{\tabcolsep}{5pt}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{lccccc}
+\hline
+\textbf{Model} & \textbf{Time} & \textbf{Accuracy} & \textbf{Precision} & \textbf{Recall} & \textbf{F1-score} \\
+\hline
+Random Forest        & 20 s & 0.9459 & 0.8750 & 1.0000 & 0.9333 \\
+                     & 45 s & \textbf{0.9710} & 1.0000 & 0.9000 & \textbf{0.9470} \\
+Gradient Boosting    & 20 s & 0.9459 & 0.8750 & 1.0000 & 0.9333 \\
+                     & 45 s & \textbf{0.9710} & 1.0000 & 0.9000 & \textbf{0.9470} \\
+Logistic Regression  & 20 s & 0.7568 & 0.7273 & 0.5714 & 0.6400 \\
+                     & 45 s & 0.8240 & 0.7000 & 0.7000 & 0.7000 \\
+kNN                  & 20 s & 0.7568 & 0.7273 & 0.5714 & 0.6400 \\
+                     & 45 s & 0.8240 & 0.7000 & 0.7000 & 0.7000 \\
+\hline
+\end{tabular}
+\end{table}
+
+
+
+
+\section{CONCLUSIONS \& FUTURE WORK}
+This paper demonstrates the effectiveness of treating CPU scheduling as a learning problem by utilizing fine grained eBPF trace points to capture real time system behavior. The framework successfully translates raw scheduler events into meaningful features that reflect workload dynamics, enabling classifiers to adapt scheduling policies to diverse task types. Comparative evaluation highlights the strength of ensemble approaches in maintaining stability and accuracy across varying observation periods, while simpler models show sensitivity to imbalance and limited robustness. The future work involves integrating the ML driven decision logic into a user space daemon and exploring the possibility of eBPF based kernel space inference.
+
+
+
+
+
+\bibliographystyle{splncs}
+  \bibliography{references}
+
+\end{document}
